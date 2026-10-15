@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>整理规则 · 下载整理</title>
+<style>
+:root {
+  --bg: #f4f5f7; --card: #fff; --text: #1d1d1f; --muted: #6b7280; --border: #e2e4e8;
+  --accent: #1a6fe0; --accent-text: #fff; --danger: #d93025; --input: #fff; --focus: rgba(26, 111, 224, .22);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1c1f; --card: #25272b; --text: #e8eaed; --muted: #9aa0a6; --border: #3a3d42;
+    --accent: #4c8df6; --input: #1e2023; --danger: #f28b82; --focus: rgba(76, 141, 246, .32);
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.55 "Segoe UI", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif; }
+header, main, .bar { max-width: 880px; margin: 0 auto; padding-left: 20px; padding-right: 20px; }
+header { padding-top: 28px; padding-bottom: 6px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0 0 6px; }
+.hint { color: var(--muted); margin: 0; max-width: 70ch; }
+main { display: grid; gap: 12px; padding-top: 14px; padding-bottom: 110px; }
+.rule { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px; display: grid; grid-template-columns: 26px 1fr auto; gap: 12px; align-items: start; }
+.idx { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; padding-top: 6px; }
+.fields { display: grid; grid-template-columns: 78px 1fr 40px 1fr; gap: 8px 10px; align-items: center; }
+.fields label { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.wide { grid-column: 2 / 5; }
+input { width: 100%; min-width: 0; font: inherit; color: var(--text); background: var(--input);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; }
+input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus); }
+input.invalid { border-color: var(--danger); }
+.tools { display: flex; flex-direction: column; gap: 4px; }
+.icon { width: 30px; height: 28px; border: 1px solid transparent; border-radius: 6px; background: transparent;
+  color: var(--muted); cursor: pointer; font: 15px/1 system-ui, sans-serif; }
+.icon:hover:not(:disabled) { background: var(--bg); border-color: var(--border); color: var(--text); }
+.icon.del:hover:not(:disabled) { color: var(--danger); }
+.icon:disabled { opacity: .28; cursor: default; }
+.fallback { border: 1px dashed var(--border); border-radius: 10px; padding: 11px 16px; color: var(--muted); }
+footer { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--border); }
+.bar { display: flex; align-items: center; gap: 8px; padding-top: 12px; padding-bottom: 12px; }
+.btn { font: inherit; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--card); color: var(--text); cursor: pointer; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn.primary:disabled { opacity: .45; cursor: default; }
+#status { margin-left: auto; color: var(--muted); text-align: right; }
+#status.err { color: var(--danger); }
+@media (max-width: 640px) {
+  .rule { grid-template-columns: 1fr auto; }
+  .idx { display: none; }
+  .fields { grid-template-columns: 1fr; gap: 4px; }
+  .fields label { margin-top: 6px; }
+  .wide { grid-column: auto; }
+  .bar { flex-wrap: wrap; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>整理规则</h1>
+  <p class="hint">从上到下匹配，第一条命中的规则生效。同一条规则里填了的条件都要满足；一个条件里写多个值（用逗号分隔）时满足其一即可。目标文件夹是相对「下载」的路径，不存在会自动创建。</p>
+</header>
+<main id="list"><p class="hint">加载中…</p></main>
+<footer><div class="bar">
+  <button class="btn" id="add">添加规则</button>
+  <button class="btn" id="reset">恢复默认</button>
+  <span id="status"></span>
+  <button class="btn primary" id="save" disabled>保存</button>
+</div></footer>
+<script>
+const api = location.pathname.replace(/\/+$/, '') + '/api/';
+const LISTS = ['keywords', 'extensions', 'sources'];
+let rules = [], dirty = false;
+const $ = s => document.querySelector(s);
+const split = s => s.split(/[,，、]/).map(x => x.trim()).filter(Boolean);
+const badDest = d => {
+  const parts = (d || '').replace(/\\/g, '/').split('/').map(p => p.trim()).filter(Boolean);
+  return !parts.length || parts.some(p => p === '.' || p === '..' || /[:*?"<>|]/.test(p) || p.endsWith('.'));
+};
+
+function status(text, err) { const s = $('#status'); s.textContent = text; s.className = err ? 'err' : ''; }
+function setDirty(v) { dirty = v; $('#save').disabled = !v; status(v ? '有未保存的修改' : ''); }
+
+function render() {
+  const list = $('#list');
+  list.textContent = '';
+  rules.forEach((r, i) => {
+    const el = document.createElement('section');
+    el.className = 'rule';
+    el.innerHTML = `<div class="idx">${i + 1}</div>
+      <div class="fields">
+        <label>名称</label><input data-k="name">
+        <label>移到</label><input data-k="dest" placeholder="如 60_图片">
+        <label>文件名含</label><input class="wide" data-k="keywords" placeholder="关键词，逗号分隔">
+        <label>扩展名</label><input class="wide" data-k="extensions" placeholder="如 jpg, png">
+        <label>来源网址含</label><input class="wide" data-k="sources" placeholder="如 baiwang（浏览器记录的下载来源）">
+      </div>
+      <div class="tools">
+        <button class="icon" data-a="up" title="上移" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button class="icon" data-a="down" title="下移" ${i === rules.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="icon del" data-a="del" title="删除这条规则">✕</button>
+      </div>`;
+    el.querySelectorAll('input').forEach(inp => {
+      const k = inp.dataset.k;
+      inp.value = LISTS.includes(k) ? (r[k] || []).join(', ') : (r[k] || '');
+      if (k === 'dest') inp.classList.toggle('invalid', badDest(inp.value));
+      inp.addEventListener('input', () => {
+        r[k] = LISTS.includes(k) ? split(inp.value) : inp.value;
+        if (k === 'dest') inp.classList.toggle('invalid', badDest(inp.value));
+        setDirty(true);
+      });
+    });
+    el.querySelector('.tools').addEventListener('click', e => {
+      const a = e.target.closest('button')?.dataset.a;
+      if (a === 'up') [rules[i - 1], rules[i]] = [rules[i], rules[i - 1]];
+      else if (a === 'down') [rules[i + 1], rules[i]] = [rules[i], rules[i + 1]];
+      else if (a === 'del') { if (!confirm(`删除规则「${r.name || '未命名'}」？`)) return; rules.splice(i, 1); }
+      else return;
+      render();
+      setDirty(true);
+    });
+    list.appendChild(el);
+  });
+  const fb = document.createElement('div');
+  fb.className = 'fallback';
+  fb.textContent = '都不命中 → 00_收件箱';
+  list.appendChild(fb);
+}
+
+async function call(path, opts) {
+  let res;
+  try { res = await fetch(api + path, opts); }
+  catch { throw new Error('连接不上，「下载整理」可能已经退出，请重新从托盘菜单打开本页'); }
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || res.statusText);
+  return body;
+}
+
+async function save() {
+  const bad = rules.findIndex(r => badDest(r.dest));
+  if (bad >= 0) { status(`第 ${bad + 1} 条规则的目标文件夹不合法`, true); return; }
+  try {
+    rules = await call('rules', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rules) });
+    render();
+    setDirty(false);
+    status('已保存，立即生效');
+  } catch (e) { status('保存失败：' + e.message, true); }
+}
+
+$('#save').onclick = save;
+$('#add').onclick = () => {
+  rules.push({ name: '新规则', keywords: [], extensions: [], sources: [], dest: '00_收件箱' });
+  render();
+  setDirty(true);
+  const inputs = document.querySelectorAll('.rule:last-of-type input');
+  inputs[0]?.scrollIntoView({ block: 'center' });
+  inputs[0]?.select();
+};
+$('#reset').onclick = async () => {
+  if (!confirm('恢复成默认规则？你改过的规则会被覆盖（保存后才生效）。')) return;
+  try { rules = await call('defaults'); render(); setDirty(true); }
+  catch (e) { status(e.message, true); }
+};
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); if (dirty) save(); }
+});
+window.addEventListener('beforeunload', e => { if (dirty) e.preventDefault(); });
+
+call('rules').then(r => { rules = r || []; render(); }).catch(e => status(e.message, true));
+</script>
+</body>
+</html>

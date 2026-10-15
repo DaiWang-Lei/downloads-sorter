@@ -1,0 +1,6 @@
+.DS_Store
+build/
+dist/
+windows/dist/
+# go-winres 在构建时生成
+windows/*.syso
