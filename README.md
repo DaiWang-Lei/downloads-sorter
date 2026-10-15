@@ -87,3 +87,7 @@ windows/              Windows 版（Go）
   internal/webui/       浏览器里的规则编辑页，只监听 127.0.0.1 并校验随机令牌
   main_windows.go       托盘菜单、开机启动（当前用户 Run 注册表项）
 ```
+
+## 许可证
+
+[MIT](LICENSE)
